@@ -1,6 +1,6 @@
 import uos
 remoteIP='192.168.0.3'
-remotePath='/Users/thecodeman/Projects/MicroPython_ESP32_psRAM_LoBo/MicroPython_BUILD/components/internalfs_image/image/'
+remotePath='/Users/thecodeman/Projects/micropyos/'
 uname='username'
 upass='password'
 wifiSSID = 'ssid'
