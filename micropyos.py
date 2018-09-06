@@ -348,6 +348,6 @@ def main():
             else:
                 print('unknown command');
 
-#main()
+main()
 
 
