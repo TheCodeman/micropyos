@@ -33,8 +33,9 @@ import sys
 import network
 import urequests
 import settings
+networkUp=False
 currentDir = '/flash'
-version = '0.1.0'
+version = '0.2.0'
 redLED = machine.Pin(5, machine.Pin.OUT)
 timer = machine.Timer(0)
 ledState=0;
@@ -49,19 +50,7 @@ def intCallback(timer):
     else:
         redLED.value(0)
         ledState=0
-def spinner():
-    redLED.value(1)
-    print( '\\\r', end='')
-    utime.sleep_ms(20)
-    redLED.value(0)
-    print('|\r', end='')
-    utime.sleep_ms(20)
-    redLED.value(1)
-    print('/\r', end='')
-    utime.sleep_ms(20)
-    redLED.value(0)
-    print('-\r', end='')
-    utime.sleep_ms(20)
+
 
 def reload(mod):
     import sys
@@ -76,13 +65,26 @@ if settings.autostartWiFi:
     nic.connect(settings.wifiSSID, settings.wifiPass)
     print('WiFI Connecting To {0}'.format(settings.wifiSSID) )
     while nic.isconnected()==False:
-        spinner()
+        print('*', end='')
         utime.sleep_ms(100)
-    print('\n\rConnected ',nic.ifconfig())
-    redLED.value(1)
-
+        settings.wifiTimeout -= 1
+        if settings.wifiTimeout == 0:
+            break
+    if settings.wifiTimeout !=0 and nic.isconnected():
+        print('\n\rConnected ',nic.ifconfig())
+        if settings.autoStartmDNS:
+            mdns=network.mDNS()
+            mdns.start(settings.networkName, 'MicroPython') 
+            mdns.addService('_telnet', '_tcp', 23, "MicroPython", {"board": "ESP32", "service": "mPy Telnet REPL"})
+        redLED.value(1)
+        networkUp=True
+    else:
+        print('\n\rCould not Connect to wifi')
 if settings.autoMountSD:
     settings.initSDCard()
+
+if settings.autoStartTelnet:
+    network.telnet.start(user=settings.telnetUname, password=settings.telnetPass, timeout=300)
 
 rtc=machine.RTC()
 if not rtc.synced():
@@ -156,7 +158,7 @@ def main():
                     except Exception as e:
                         print(e)
                 else:
-                    print('cp requires source file and destination')
+                    print('cp requires source filename and destination filename ')
 
             elif cmd[0] == 'run':
                 if len(cmd)==2:
@@ -166,25 +168,39 @@ def main():
                     print('Need File Name')
                 
             elif cmd[0] == 'lr':
-                if len(cmd) == 1:
-                    res=ssh.list(settings.remoteIP+settings.remotePath, settings.uname, settings.upass)
+                if networkUp:
+                    if len(cmd) == 1:
+                        res=ssh.list(settings.remoteIP+settings.remotePath, settings.uname, settings.upass)
+                    else:
+                        res=ssh.list(settings.remoteIP+settings.remotePath+cmd[1], settings.uname, settings.upass)
+                    print(res[0])
+                    if res[0]==0:
+                        print(res[1])
+                        print(res[2])
                 else:
-                    res=ssh.list(settings.remoteIP+settings.remotePath+cmd[1], settings.uname, settings.upass)
-                print(res[0])
-                if res[0]==0:
-                    print(res[1])
-                    print(res[2])
-                
+                    print('No Network Connection')            
             elif cmd[0] == 'put':
-                res=ssh.put(settings.remoteIP+settings.remotePath+cmd[1], settings.uname, settings.upass, file=cmd[1])
-                if res[0]==0:
-                    print('File %s copied to %s' % ( cmd[1], settings.remotePath))
-                
+                if networkUp:
+                    res=ssh.put(settings.remoteIP+settings.remotePath+cmd[1], settings.uname, settings.upass, file=cmd[1])
+                    if res[0]==0:
+                        print('File %s copied to %s' % ( cmd[1], settings.remotePath))
+                else:
+                    print('No Network Connection')            
             elif cmd[0] == 'get':
-                res=ssh.get(settings.remoteIP+settings.remotePath+cmd[1], settings.uname, settings.upass, file=cmd[1])
-                if res[0]==0:
-                    print('File %s copied from %s' % (  cmd[1], settings.remotePath))
-                
+                if networkUp:
+                    res=ssh.get(settings.remoteIP+settings.remotePath+cmd[1], settings.uname, settings.upass, file='$$$.tmp')
+                    if res[0]==0:
+                        try:
+                            uos.remove(cmd[1])
+                        except:
+                            pass
+                        uos.rename('$$$.tmp', cmd[1])
+                        print('File %s copied from %s' % (  cmd[1], settings.remotePath))
+                    else:
+                        uos.remove('$$$.tmp')
+                        print('File Not Found')
+                else:
+                    print('No Network Connection')            
             elif cmd[0] == 'edit':
                 pye(cmd[1])
                 
@@ -244,24 +260,26 @@ def main():
                 print('File System Size {:,} - Free Space {:,}'.format(fs_size, fs_free))
                 
             elif cmd[0] == 'wget':
-                try:
-                    response = urequests.get(cmd[1])
+                if networkUp:
+                    try:
+                        response = urequests.get(cmd[1])
 
-                    if response.status_code == 200:
-                        print(type(response))
-                        print(response.text)
-                        print(type(response.text))
-                        fileName = cmd[1].split('/')
-                        print(fileName)
-                        print(fileName[-1])
-                        f=open(fileName[-1], 'w')
-                        f.write(response.text)
-                        f.close()
-                    else:
-                       print('Error: {0} {1}'.format(response.status_code, response.reason.decode('utf-8')))
-                except Exception as e:
-                    print(e)
-                
+                        if response.status_code == 200:
+                            print(type(response))
+                            print(response.text)
+                            print(type(response.text))
+                            fileName = cmd[1].split('/')
+                            print(fileName)
+                            print(fileName[-1])
+                            f=open(fileName[-1], 'w')
+                            f.write(response.text)
+                            f.close()
+                        else:
+                           print('Error: {0} {1}'.format(response.status_code, response.reason.decode('utf-8')))
+                    except Exception as e:
+                        print(e)
+                else:
+                    print('No Network Connection')            
             elif cmd[0] == 'wifi':
                 try:
                     if cmd[1] == 'active':
@@ -329,15 +347,27 @@ def main():
                 print('----------------------------------')
                 
             elif cmd[0] == 'exit':
+                timer.deinit()
                 return 1
                 
             elif cmd[0] == 'update':
-                res=ssh.get(settings.remoteIP+settings.remotePath+'micropyos.py', settings.uname, settings.upass, file='micropyos.py')
-                if res[0]==0:
-                    print('File %s copied from %s' % (  'micropyos.py', settings.remotePath))
+                if networkUp:
+                    res=ssh.get(settings.remoteIP+settings.remotePath+'micropyos.py', settings.uname, settings.upass, file='$$$.tmp')
+                    if res[0]==0:
+                        try:
+                            uos.remove('micropyos.py')
+                        except:
+                            pass
+                        uos.rename('$$$.tmp', 'micropyos.py')
+                        print('File %s copied from %s' % (  'micropyos.py', settings.remotePath))
+                    else:
+                        uos.remove('$$$.tmp')
+                        print('File Not Found')
                     timer.deinit()
                     return 2
-                
+                else:
+                    print('No Network Connection')            
+
             elif cmd[0] == 'modules':
                 for m in sys.modules:
                     print(m)
